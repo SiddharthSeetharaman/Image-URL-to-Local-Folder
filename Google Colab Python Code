@@ -1,0 +1,97 @@
+import pandas as pd
+import requests
+import os
+import threading
+import zipfile
+from google.colab import files  # Correct import for downloading files in Colab
+
+# File path and sheet names (assuming Excel contains Image1 to Image6 sheets)
+file_path = "Battery claims for attachments (1).xlsx"  # Ensure this file is uploaded to Colab
+sheet_names = [f"Image{i}" for i in range(1, 7)]  # Automatically fetch Image1 to Image6
+
+# Google Colab destination folder
+base_folder = "/content/Downloaded_Images"
+os.makedirs(base_folder, exist_ok=True)
+
+# Allowed file types (including PDF)
+allowed_file_types = ["jpg", "png", "jpeg", "gif", "bmp", "pdf"]
+
+# Function to download a single file
+def download_file(image_url, image_name, file_type, folder):
+    try:
+        response = requests.get(image_url, stream=True, timeout=10)
+        if response.status_code == 200:
+            file_path = os.path.join(folder, f"{image_name}.{file_type}")
+            with open(file_path, "wb") as file:
+                for chunk in response.iter_content(4096):
+                    file.write(chunk)
+            print(f"Downloaded: {image_name}.{file_type}")
+        else:
+            print(f"Failed to download {image_url}, Status Code: {response.status_code}")
+    except Exception as e:
+        print(f"Error downloading {image_url}: {e}")
+
+# Function to process each sheet
+def process_sheet(sheet_name):
+    print(f"\nProcessing {sheet_name}...")
+
+    # Create a folder for each sheet
+    folder = os.path.join(base_folder, sheet_name)
+    os.makedirs(folder, exist_ok=True)
+
+    # Load Excel sheet
+    df = pd.read_excel(file_path, sheet_name=sheet_name)
+
+    # Clean column names (strip spaces)
+    df.columns = [col.strip() for col in df.columns]
+
+    # Rename 'Unnamed' columns if necessary
+    column_mapping = {"Unnamed: 2": "File type"}
+    df.rename(columns=column_mapping, inplace=True)
+
+    # Expected column names
+    expected_columns = ["Image", "Name", "File type"]
+
+    # Ensure correct column names are used
+    if not all(col in df.columns for col in expected_columns):
+        print(f"Skipping {sheet_name}: Missing expected columns.")
+        return
+
+    # Create threads for faster downloads
+    threads = []
+    for _, row in df.iterrows():
+        image_url = str(row["Image"]).strip()
+        image_name = str(row["Name"]).strip().replace(" ", "_").split(".")[0]  # Remove ".0"
+        file_type = str(row["File type"]).strip().lower()  # Ensure file type is lowercase
+
+        # Validate file type
+        if file_type not in allowed_file_types:
+            print(f"Skipping {image_name}: Unsupported file type '{file_type}'")
+            continue
+
+        # Start a new thread for each download
+        thread = threading.Thread(target=download_file, args=(image_url, image_name, file_type, folder))
+        threads.append(thread)
+        thread.start()
+
+    # Wait for all threads to finish
+    for thread in threads:
+        thread.join()
+
+    print(f"Finished processing {sheet_name}")
+
+# Process all Image1 to Image6 sheets
+for sheet in sheet_names:
+    process_sheet(sheet)
+
+# Create a zip file of all downloaded files
+zip_filename = "/content/Downloaded_Images.zip"
+with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
+    for root, _, files_list in os.walk(base_folder):
+        for file in files_list:
+            zipf.write(os.path.join(root, file), os.path.relpath(os.path.join(root, file), base_folder))
+
+# ✅ Corrected: Use google.colab.files.download() properly
+files.download(zip_filename)
+
+print("\nAll images downloaded and zipped successfully! 🚀")
